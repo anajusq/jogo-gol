@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telão — Decolagem</title>
+<style>
+  :root { --ink:#2B2B2B; --orange:#FF6F0F; --white:#FFFFFF; --gray:#8D8D8D; --line:#E6E6E6; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { background:linear-gradient(#FFFFFF 0%,#FFF1E6 100%); color:var(--ink); font-family:"Trebuchet MS","Segoe UI",system-ui,sans-serif; overflow:hidden; }
+  #stage { position:absolute; inset:0 0 56px 0; padding:3vh 4vw; display:flex; flex-direction:column; }
+  h1 { font-size:clamp(2.2rem,5vw,4.5rem); margin:0; line-height:1.05; }
+  h2 { font-size:clamp(1.4rem,2.6vw,2.4rem); margin:0; font-weight:700; opacity:.9; }
+  .lobby { flex:1; display:flex; gap:5vw; align-items:center; justify-content:center; }
+  .qrbox { background:var(--white); border:6px solid var(--orange); border-radius:28px; padding:18px; width:min(38vh,34vw); }
+  .qrbox img { width:100%; display:block; }
+  .names { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; max-width:46vw; }
+  .chip { padding:8px 16px; border-radius:99px; font-weight:700; font-size:clamp(1rem,1.6vw,1.5rem); }
+  .chip.off { opacity:.35; }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:2vh; }
+  .count { font-size:clamp(8rem,28vh,20rem); font-weight:900; color:var(--orange); line-height:1; }
+  .track { position:relative; flex:1; margin-top:2vh; }
+  .lane { position:absolute; left:0; right:0; height:var(--lh); transition:transform .45s ease; border-bottom:2px dashed rgba(0,0,0,.12); }
+  .lane .nm { position:absolute; left:0; top:50%; transform:translateY(-50%); font-weight:800; font-size:clamp(.9rem,1.7vw,1.6rem); width:12vw; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lane .rail { position:absolute; left:13vw; right:7vw; top:0; bottom:0; }
+  .lane .pl { position:absolute; top:50%; width:64px; transform:translate(-50%,-50%); transition:left .2s linear; }
+  .finish { position:absolute; right:7vw; top:0; bottom:0; width:12px; background:repeating-linear-gradient(#fff 0 12px,#2B2B2B 12px 24px); opacity:.85; }
+  .runway { position:relative; flex:1; margin-top:2vh; border-radius:20px; overflow:hidden; background:linear-gradient(#FFFFFF,#FFD9BD); }
+  .sky-plane { position:absolute; width:clamp(120px,16vw,260px); transition:left .15s linear, bottom .15s linear, transform .15s linear; }
+  .ground { position:absolute; left:-4vw; right:-4vw; bottom:0; height:22%; background:#5C5C5C; border-top:6px solid #8D8D8D; }
+  .ground::after { content:""; position:absolute; left:0; right:0; top:50%; border-top:6px dashed #fff; }
+  .fuel { height:34px; border-radius:17px; background:var(--line); overflow:hidden; margin-top:2vh; }
+  .fuel i { display:block; height:100%; background:var(--orange); width:0; transition:width .15s; }
+  .time { font-size:clamp(2rem,5vw,4rem); font-weight:900; }
+  .podium { display:flex; align-items:flex-end; gap:2vw; height:34vh; margin-top:3vh; }
+  .step { width:min(22vw,260px); border-radius:18px 18px 0 0; text-align:center; padding-top:14px; font-weight:900; display:flex; flex-direction:column; align-items:center; gap:6px; color:var(--ink); }
+  .step span { font-size:clamp(1rem,2vw,2rem); }
+  .step b { font-size:clamp(2.4rem,5vw,4.8rem); }
+  #ctrl { position:absolute; left:0; right:0; bottom:0; height:56px; display:flex; gap:10px; align-items:center; justify-content:center; background:rgba(0,0,0,.06); opacity:.55; transition:opacity .2s; }
+  #ctrl:hover { opacity:1; }
+  #ctrl button { font:inherit; font-weight:700; padding:8px 16px; border-radius:10px; border:0; background:#E6E6E6; color:var(--ink); cursor:pointer; }
+  #ctrl small { opacity:.7; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="ctrl">
+  <button id="b1">Iniciar corrida (1)</button>
+  <button id="b2">Iniciar decolagem (2)</button>
+  <button id="b0">Voltar ao início (0)</button>
+  <button id="bc">Limpar jogadores</button>
+  <small id="status"></small>
+</div>
+
+<script>
+const stage = document.getElementById('stage');
+let ws, S = null, lastKey = '';
+const plane = (c, flip) => `<svg viewBox="0 0 120 50" style="${flip||''}"><path d="M8 26 L90 20 Q112 20 116 25 Q112 31 90 31 L8 33 Z" fill="${c}"/><path d="M52 24 L34 3 L46 3 L72 22 Z" fill="${c}" stroke="#2B2B2B" stroke-width="1.5"/><path d="M52 31 L34 49 L46 49 L72 32 Z" fill="${c}" stroke="#2B2B2B" stroke-width="1.5"/><path d="M8 26 L2 8 L14 8 L22 24 Z" fill="${c}" stroke="#2B2B2B" stroke-width="1.5"/><circle cx="96" cy="25" r="3" fill="#2B2B2B"/><circle cx="80" cy="25.5" r="2" fill="#2B2B2B"/><circle cx="68" cy="25.8" r="2" fill="#2B2B2B"/></svg>`;
+const lum = h => { const n = parseInt(h.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cmd = t => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t }));
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+  ws.onopen = () => { ws.send(JSON.stringify({ t: 'host' })); document.getElementById('status').textContent = ''; };
+  ws.onclose = () => { document.getElementById('status').textContent = 'reconectando…'; setTimeout(connect, 1200); };
+  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.t === 'state') { S = m.s; render(); } };
+}
+b1.onclick = () => cmd('start_race'); b2.onclick = () => cmd('start_takeoff'); b0.onclick = () => cmd('reset');
+bc.onclick = () => { if (confirm('Remover todos os jogadores?')) cmd('clear'); };
+addEventListener('keydown', e => { if (e.key === '1') cmd('start_race'); if (e.key === '2') cmd('start_takeoff'); if (e.key === '0') cmd('reset'); });
+
+function render() {
+  const key = S.phase + (S.phase === 'countdown' ? S.countdown + S.next : '');
+  if (key !== lastKey) { lastKey = key; build(); }
+  update();
+}
+
+function build() {
+  const ph = S.phase;
+  if (ph === 'lobby') {
+    stage.innerHTML = `<div class="lobby"><div><h1>Escaneie e<br>embarque</h1><h2 style="margin-top:1vh">Aponte a câmera do celular para o QR Code</h2><div class="names" id="names"></div></div><div class="qrbox"><img src="/qr.svg" alt="QR Code"></div></div>`;
+  } else if (ph === 'countdown') {
+    stage.innerHTML = `<div class="center"><h2>${S.next === 'race' ? 'Corrida de aviões' : 'Decolagem coletiva'}</h2><div class="count">${S.countdown}</div><h2>${S.next === 'race' ? 'Toquem o mais rápido que puderem!' : 'Todo mundo junto, sem parar: o combustível vaza!'}</h2></div>`;
+  } else if (ph === 'race') {
+    stage.innerHTML = `<h2>Corrida de aviões</h2><div class="track" id="track"><div class="finish"></div></div>`;
+  } else if (ph === 'race_end') {
+    stage.innerHTML = `<div class="center"><h1>Pódio da corrida</h1><div class="podium" id="pod"></div></div>`;
+  } else if (ph === 'takeoff' || ph === 'takeoff_end') {
+    stage.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div><h1 id="tt">Decolagem coletiva</h1><h2 id="ts">O combustível vaza: não parem de tocar!</h2></div><div class="time" id="tm"></div></div><div class="fuel"><i id="fb"></i></div><div class="runway" id="rw"><div class="ground"></div><div class="sky-plane" id="sp">${plane('#FF6F0F')}</div></div>`;
+  }
+}
+
+function update() {
+  const ph = S.phase;
+  if (ph === 'lobby') {
+    const n = document.getElementById('names');
+    n.innerHTML = S.players.map(p => `<span class="chip ${p.connected ? '' : 'off'}" style="background:${p.color};color:${lum(p.color) > .55 ? '#2B2B2B' : '#fff'}">${esc(p.name)}</span>`).join('') ||
+      '<span style="opacity:.6;font-size:1.3rem">Esperando passageiros…</span>';
+    document.getElementById('status').textContent = S.players.filter(p => p.connected).length + ' a bordo';
+  }
+  if (ph === 'race') {
+    const track = document.getElementById('track');
+    const list = S.players.filter(p => p.connected || p.progress > 0).sort((a, b) => b.progress - a.progress).slice(0, 10);
+    const h = track.clientHeight, lh = Math.max(44, Math.min(90, h / Math.max(list.length, 1)));
+    track.style.setProperty('--lh', lh + 'px');
+    const seen = new Set();
+    list.forEach((p, i) => {
+      seen.add(p.id);
+      let el = track.querySelector(`[data-id="${p.id}"]`);
+      if (!el) { el = document.createElement('div'); el.className = 'lane'; el.dataset.id = p.id;
+        el.innerHTML = `<div class="nm"></div><div class="rail"><div class="pl">${plane(p.color)}</div></div>`; track.appendChild(el); }
+      el.style.transform = `translateY(${i * lh}px)`;
+      el.querySelector('.nm').textContent = p.name;
+            el.querySelector('.pl').style.left = p.progress + '%';
+    });
+    track.querySelectorAll('.lane').forEach(el => { if (!seen.has(el.dataset.id)) el.remove(); });
+  }
+  if (ph === 'race_end') {
+    const byId = Object.fromEntries(S.players.map(p => [p.id, p]));
+    let top = S.ranking.slice(0, 3).map(i => byId[i]).filter(Boolean);
+    if (!top.length) { document.getElementById('pod').innerHTML = '<h2>Ninguém cruzou a linha a tempo</h2>'; return; }
+    const heights = { 0: '100%', 1: '72%', 2: '55%' }, cols = ['#FF6F0F', '#C8C8C8', '#8D8D8D'];
+    const order = top.length === 1 ? [0] : top.length === 2 ? [1, 0] : [1, 0, 2];
+    document.getElementById('pod').innerHTML = order.map(i => `<div class="step" style="height:${heights[i]};background:${cols[i]}"><span>${esc(top[i].name)}</span><b>${i + 1}º</b></div>`).join('');
+  }
+  if (ph === 'takeoff' || ph === 'takeoff_end') {
+    const pct = Math.min(1, S.takeoff.fuel / S.takeoff.goal);
+    document.getElementById('fb').style.width = pct * 100 + '%';
+    const sp = document.getElementById('sp'), rw = document.getElementById('rw');
+    const x = 4 + pct * 70, lift = pct > .7 ? (pct - .7) / .3 : 0;
+    sp.style.left = x + '%'; sp.style.bottom = `calc(20% + ${lift * 55}%)`; sp.style.transform = `rotate(${-lift * 18}deg)`;
+    if (ph === 'takeoff') { document.getElementById('tm').textContent = Math.ceil(S.takeoff.timeLeft / 1000) + 's'; }
+    else {
+      document.getElementById('tm').textContent = ''; document.getElementById('ts').textContent = '';
+      document.getElementById('tt').textContent = S.takeoff.success ? 'Decolamos! 🛫' : 'O combustível acabou o tempo…';
+      if (S.takeoff.success) { sp.style.left = '85%'; sp.style.bottom = '70%'; }
+    }
+  }
+}
+connect();
+</script>
+</body>
+</html>

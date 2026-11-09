@@ -8,17 +8,19 @@ const PORT = process.env.PORT || 3000;
 const RACE_TAPS = 60;          // toques para cruzar a linha de chegada
 const RACE_TIMEOUT = 45000;    // ms
 const TAKEOFF_TIME = 20000;    // ms
-const TAPS_PER_PLAYER = 22;    // meta do combustível = jogadores x isso
+const TAPS_PER_PLAYER = 55;    // meta do combustível = jogadores x isso
+const LEAK_PER_PLAYER = 1.5;   // combustível que vaza por segundo, por jogador
 const MAX_TAPS_PER_SEC = 14;
-const COLORS = ['#FF6F0F','#2EC4B6','#E71D73','#FFD23F','#7B61FF','#4CC9F0','#9EF01A','#F72585','#FB5607','#06D6A0','#EF476F','#B5179E'];
+const COLORS = ['#FF6F0F','#2B2B2B','#FF9F1C','#8D8D8D','#E8590C','#FFB703','#5C5C5C','#D9480F','#F4A261','#A8A8A8','#BF4E00','#FFC971'];
 
 const state = {
   phase: 'lobby',            // lobby | countdown | race | race_end | takeoff | takeoff_end
   next: null,
+  round: 0,
   countdown: 0,
   raceStart: 0,
   ranking: [],               // ids na ordem de chegada
-  takeoff: { fuel: 0, goal: 0, endsAt: 0, success: null },
+  takeoff: { fuel: 0, goal: 0, leak: 0, endsAt: 0, success: null },
 };
 const players = new Map();   // id -> player
 const sockets = new Map();   // ws -> { id, host }
@@ -54,8 +56,9 @@ function broadcast() {
 }
 
 function resetRound() {
+  state.round++;
   state.phase = 'lobby'; state.next = null; state.ranking = [];
-  state.takeoff = { fuel: 0, goal: 0, endsAt: 0, success: null };
+  state.takeoff = { fuel: 0, goal: 0, leak: 0, endsAt: 0, success: null };
   for (const p of players.values()) { p.progress = 0; p.finishedAt = 0; p.taps = 0; p.fuelTaps = 0; }
 }
 
@@ -66,9 +69,11 @@ function startCountdown(next) {
     state.ranking = [];
     for (const p of players.values()) { p.progress = 0; p.finishedAt = 0; p.taps = 0; }
   } else {
-    state.takeoff = { fuel: 0, goal: Math.max(30, connectedPlayers().length * TAPS_PER_PLAYER), endsAt: 0, success: null };
+    const n = connectedPlayers().length;
+    state.takeoff = { fuel: 0, goal: Math.max(60, n * TAPS_PER_PLAYER), leak: n * LEAK_PER_PLAYER, endsAt: 0, success: null };
     for (const p of players.values()) p.fuelTaps = 0;
   }
+  const round = ++state.round;
   state.phase = 'countdown'; state.next = next; state.countdown = 3;
   const iv = setInterval(() => {
     state.countdown--;
@@ -77,10 +82,10 @@ function startCountdown(next) {
       state.countdown = 0;
       if (next === 'race') {
         state.phase = 'race'; state.raceStart = Date.now();
-        setTimeout(() => { if (state.phase === 'race') endRace(); }, RACE_TIMEOUT);
+        setTimeout(() => { if (state.phase === 'race' && state.round === round) endRace(); }, RACE_TIMEOUT);
       } else {
         state.phase = 'takeoff'; state.takeoff.endsAt = Date.now() + TAKEOFF_TIME;
-        setTimeout(() => { if (state.phase === 'takeoff') endTakeoff(false); }, TAKEOFF_TIME + 50);
+        setTimeout(() => { if (state.phase === 'takeoff' && state.round === round) endTakeoff(false); }, TAKEOFF_TIME + 50);
       }
     }
     broadcast();
@@ -150,7 +155,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/qr.svg') {
     const proto = req.headers['x-forwarded-proto'] || 'http';
     const link = `${proto}://${req.headers.host}/`;
-    const svg = await QRCode.toString(link, { type: 'svg', margin: 1, color: { dark: '#14213D', light: '#FFF4E6' } });
+    const svg = await QRCode.toString(link, { type: 'svg', margin: 1, color: { dark: '#2B2B2B', light: '#FFFFFF' } });
     res.writeHead(200, { 'Content-Type': 'image/svg+xml' }); return res.end(svg);
   }
   const map = { '/': 'jogar.html', '/telao': 'telao.html' };
@@ -176,5 +181,10 @@ wss.on('connection', ws => {
   });
 });
 
-setInterval(() => { if (state.phase === 'race' || state.phase === 'takeoff') broadcast(); }, 100);
+setInterval(() => {
+  if (state.phase === 'takeoff') {
+    state.takeoff.fuel = Math.max(0, state.takeoff.fuel - state.takeoff.leak * 0.1);
+  }
+  if (state.phase === 'race' || state.phase === 'takeoff') broadcast();
+}, 100);
 server.listen(PORT, () => console.log(`Jogo no ar na porta ${PORT} — telão em /telao`));
