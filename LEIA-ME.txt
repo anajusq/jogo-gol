@@ -1,0 +1,15 @@
+JOGO DA GOL — Corrida de Aviões + Decolagem Coletiva
+
+Como colocar no ar (grátis, ~10 min) no Render (render.com):
+1. Crie um repositório no GitHub e suba estes arquivos (sem a pasta node_modules).
+2. No Render: New > Web Service > conecte o repositório.
+3. Build Command: npm install    |    Start Command: npm start
+4. Quando ficar "Live", abra o endereço que o Render der:
+   - no notebook ligado no telão: ENDEREÇO/telao   (mostra o QR Code e comanda o jogo)
+   - na sala: a galera escaneia o QR Code e entra.
+
+Na apresentação (teclas no telão): 1 = corrida, 2 = decolagem, 0 = voltar ao início.
+Dica: abra o endereço 1 minuto antes (o plano grátis "dorme" e demora a acordar).
+
+Para testar no próprio computador: npm install && npm start  -> http://localhost:3000/telao
+(No computador, os celulares só entram se estiverem na mesma rede e usar o IP da máquina.)
