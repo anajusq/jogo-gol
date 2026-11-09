@@ -50,11 +50,29 @@
   <button id="b2">Iniciar decolagem (2)</button>
   <button id="b0">Voltar ao início (0)</button>
   <button id="bc">Limpar jogadores</button>
+  <button id="ad" aria-pressed="false">Audiodescrição: desligada (A)</button>
   <small id="status"></small>
 </div>
 
 <script>
 const stage = document.getElementById('stage');
+// ---- Audiodescrição (opcional, desligada por padrão) ----
+const Narr = (() => {
+  const ok = 'speechSynthesis' in window; let on = false, voice = null;
+  const pick = () => { const v = speechSynthesis.getVoices(); voice = v.find(x => /pt-BR/i.test(x.lang)) || v.find(x => /^pt/i.test(x.lang)) || null; };
+  if (ok) { pick(); speechSynthesis.onvoiceschanged = pick; }
+  function say(text, urgent) {
+    if (!on || !ok) return;
+    if (urgent) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'pt-BR'; if (voice) u.voice = voice; u.rate = 1.05;
+    speechSynthesis.speak(u);
+  }
+  return { supported: ok, get on() { return on; }, say,
+    set(v) { on = v; if (!ok) return; speechSynthesis.cancel(); if (v) say('Audiodescrição ligada.', true); } };
+})();
+const nr = { ms: {}, pos: 0, t: 0, n: 0, names: '' };
+const resetNr = () => { nr.ms = {}; nr.pos = 0; nr.t = Date.now(); };
+
 let ws, S = null, lastKey = '';
 const plane = (c, flip) => `<svg viewBox="0 0 120 50" style="${flip||''}"><path d="M8 26 L90 20 Q112 20 116 25 Q112 31 90 31 L8 33 Z" fill="${c}"/><path d="M52 24 L34 3 L46 3 L72 22 Z" fill="${c}" stroke="#2B2B2B" stroke-width="1.5"/><path d="M52 31 L34 49 L46 49 L72 32 Z" fill="${c}" stroke="#2B2B2B" stroke-width="1.5"/><path d="M8 26 L2 8 L14 8 L22 24 Z" fill="${c}" stroke="#2B2B2B" stroke-width="1.5"/><circle cx="96" cy="25" r="3" fill="#2B2B2B"/><circle cx="80" cy="25.5" r="2" fill="#2B2B2B"/><circle cx="68" cy="25.8" r="2" fill="#2B2B2B"/></svg>`;
 const lum = h => { const n = parseInt(h.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
@@ -69,12 +87,13 @@ function connect() {
 }
 b1.onclick = () => cmd('start_race'); b2.onclick = () => cmd('start_takeoff'); b0.onclick = () => cmd('reset');
 bc.onclick = () => { if (confirm('Remover todos os jogadores?')) cmd('clear'); };
-addEventListener('keydown', e => { if (e.key === '1') cmd('start_race'); if (e.key === '2') cmd('start_takeoff'); if (e.key === '0') cmd('reset'); });
+addEventListener('keydown', e => { if (e.key === 'a' || e.key === 'A') toggleAD(); if (e.key === '1') cmd('start_race'); if (e.key === '2') cmd('start_takeoff'); if (e.key === '0') cmd('reset'); });
 
 function render() {
   const key = S.phase + (S.phase === 'countdown' ? S.countdown + S.next : '');
-  if (key !== lastKey) { lastKey = key; build(); }
+  if (key !== lastKey) { lastKey = key; build(); resetNr(); nr.cross = S.ranking.length; phaseSay(); }
   update();
+  tickSay();
 }
 
 function build() {
@@ -139,6 +158,49 @@ function update() {
     }
   }
 }
+
+const byId = () => Object.fromEntries(S.players.map(p => [p.id, p]));
+const lista = a => a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' e ' + a[a.length - 1];
+function phaseSay() {
+  if (!Narr.on) return;
+  const ph = S.phase;
+  if (ph === 'lobby') { const n = S.players.filter(p => p.connected).length; nr.n = n; Narr.say('Tela de embarque. À direita, um QR Code com borda laranja para escanear. À esquerda, os nomes de quem já entrou. ' + n + (n === 1 ? ' passageiro a bordo.' : ' passageiros a bordo.')); }
+  else if (ph === 'countdown') Narr.say((S.countdown === 3 ? (S.next === 'race' ? 'Corrida de aviões. ' : 'Decolagem coletiva. ') : '') + S.countdown, true);
+  else if (ph === 'race') Narr.say('A corrida começou. Os aviões, em laranja e cinza, correm da esquerda para a direita, até a linha de chegada quadriculada. O líder fica na raia de cima.', true);
+  else if (ph === 'race_end') { const m = byId(), top = S.ranking.slice(0, 3).map(i => m[i] && m[i].name).filter(Boolean);
+    Narr.say(top.length ? 'Fim da corrida. Pódio: primeiro lugar, ' + top[0] + (top[1] ? '. Segundo lugar, ' + top[1] : '') + (top[2] ? '. Terceiro lugar, ' + top[2] : '') + '.' : 'Fim da corrida. Ninguém cruzou a linha a tempo.', true); }
+  else if (ph === 'takeoff') Narr.say('Decolagem coletiva. Um avião laranja está parado na pista cinza. A barra de combustível, logo abaixo do título, enche quando a sala toca, mas vaza se pararem. Quando encher, o avião decola.', true);
+  else if (ph === 'takeoff_end') Narr.say(S.takeoff.success ? 'Decolamos! O avião acelerou pela pista e subiu no céu.' : 'O tempo acabou e o combustível não foi suficiente. O avião ficou na pista.', true);
+}
+function tickSay() {
+  if (!Narr.on) return;
+  const now = Date.now(), ph = S.phase;
+  if (ph === 'lobby') {
+    const names = S.players.filter(p => p.connected).map(p => p.name);
+    if (names.length > nr.n && now - nr.t > 3000) { const novos = names.slice(nr.n); nr.n = names.length; nr.t = now; Narr.say(lista(novos) + (novos.length === 1 ? ' entrou no voo.' : ' entraram no voo.')); }
+    else if (names.length < nr.n) nr.n = names.length;
+  }
+  if (ph === 'race') {
+    const m = byId(), cross = S.ranking.length;
+    if (cross > nr.cross) { for (let i = nr.cross || 0; i < cross; i++) if (i < 3 && m[S.ranking[i]]) Narr.say(m[S.ranking[i]].name + ' cruzou a linha em ' + (i + 1) + 'º lugar.', true); nr.cross = cross; }
+    else if (now - nr.t > 6000) { nr.t = now; const top = S.players.slice().sort((a, b) => b.progress - a.progress).filter(p => !p.finished).slice(0, 3).map(p => p.name);
+      if (top.length) Narr.say('Na frente: ' + lista(top) + '.'); }
+  }
+  if (ph === 'takeoff') {
+    const pct = S.takeoff.fuel / S.takeoff.goal * 100, sec = Math.ceil(S.takeoff.timeLeft / 1000);
+    [25, 50, 75].forEach(x => { if (pct >= x && !nr.ms[x]) { nr.ms[x] = 1; Narr.say('Combustível em ' + x + ' por cento.', true); } });
+    [10, 5].forEach(w => { if (sec <= w && !nr.ms['t' + w]) { nr.ms['t' + w] = 1; Narr.say('Faltam ' + w + ' segundos!', true); } });
+    if (pct < 15 && sec < 17 && now - nr.t > 6000) { nr.t = now; Narr.say('Combustível baixo! A sala precisa tocar mais rápido!'); }
+  }
+}
+function toggleAD() {
+  if (!Narr.supported) return;
+  Narr.set(!Narr.on);
+  ad.textContent = 'Audiodescrição: ' + (Narr.on ? 'ligada' : 'desligada') + ' (A)'; ad.setAttribute('aria-pressed', String(Narr.on));
+  ad.style.background = Narr.on ? '#FF6F0F' : '#E6E6E6'; ad.style.color = Narr.on ? '#fff' : '#2B2B2B';
+  if (Narr.on && S) { nr.cross = S.ranking.length; phaseSay(); }
+}
+if (!Narr.supported) ad.style.display = 'none'; else ad.onclick = toggleAD;
 connect();
 </script>
 </body>

@@ -27,15 +27,34 @@
     .count { font-size:7rem; font-weight:900; color:var(--orange); line-height:1; }
   .label { font-size:.95rem; opacity:.75; }
   .place { font-size:5rem; font-weight:900; color:var(--orange); line-height:1; }
+  .ad { font:inherit; font-weight:700; font-size:.85rem; padding:8px 12px; border-radius:99px; border:2px solid var(--orange); background:var(--white); color:var(--orange); }
+  .ad.on { background:var(--orange); color:#fff; }
   .off { display:none !important; }
 </style>
 </head>
 <body>
-<header><div class="who"><span class="dot" id="dot"></span><span id="me">—</span></div><span id="conn"></span></header>
+<header><div class="who"><span class="dot" id="dot"></span><span id="me">—</span><span id="conn" class="label"></span></div><button id="ad" class="ad" aria-pressed="false">Usar audiodescrição</button></header>
 <main id="main"></main>
 
 <script>
 const $ = s => document.querySelector(s);
+// ---- Audiodescrição (opcional, desligada por padrão) ----
+const Narr = (() => {
+  const ok = 'speechSynthesis' in window; let on = false, voice = null;
+  const pick = () => { const v = speechSynthesis.getVoices(); voice = v.find(x => /pt-BR/i.test(x.lang)) || v.find(x => /^pt/i.test(x.lang)) || null; };
+  if (ok) { pick(); speechSynthesis.onvoiceschanged = pick; }
+  function say(text, urgent) {
+    if (!on || !ok) return;
+    if (urgent) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'pt-BR'; if (voice) u.voice = voice; u.rate = 1.05;
+    speechSynthesis.speak(u);
+  }
+  return { supported: ok, get on() { return on; }, say,
+    set(v) { on = v; if (!ok) return; speechSynthesis.cancel(); if (v) say('Audiodescrição ligada.', true); } };
+})();
+const nr = { ms: {}, pos: 0, t: 0, n: 0, names: '' };
+const resetNr = () => { nr.ms = {}; nr.pos = 0; nr.t = Date.now(); };
+
 const main = $('#main');
 let id = localStorage.getItem('gol-id');
 if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); localStorage.setItem('gol-id', id); }
@@ -53,10 +72,13 @@ function connect() {
   };
 }
 function join() { ws.send(JSON.stringify({ t: 'join', id, name })); }
-function tap() { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'tap' })); if (navigator.vibrate) navigator.vibrate(8); }
+const buzz = p => { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} };
+function tap() { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'tap' })); buzz(10); }
 
 function bindTap(el) {
-  const down = e => { e.preventDefault(); el.classList.add('down'); tap(); };
+  let lastP = 0;
+  const down = e => { e.preventDefault(); lastP = Date.now(); el.classList.add('down'); tap(); };
+  el.addEventListener('click', () => { if (Date.now() - lastP > 500) tap(); });
   const up = () => el.classList.remove('down');
   el.addEventListener('pointerdown', down);
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('pointerleave', up);
@@ -69,8 +91,10 @@ function render() {
   const p = mine(); const ph = S.phase;
   const key = ph + (ph === 'countdown' ? S.countdown + S.next : '');
   // fases com botão: só monta uma vez e depois atualiza barras
-  if (key !== lastKey) { lastKey = key; build(ph); }
+  if (key !== lastKey) { lastKey = key; build(ph); resetNr(); phaseSay(ph); phaseBuzz(ph, p); }
   update(ph, p);
+  tickSay(ph, p);
+  tickBuzz(ph, p);
 }
 
 function renderJoin() {
@@ -79,7 +103,7 @@ function renderJoin() {
     <h1>Pronto pra<br>decolar?</h1>
     <p>Digite seu nome e entre no voo.</p>
     <input id="nm" maxlength="14" placeholder="Seu nome" autocomplete="off" value="${name.replace(/"/g,'')}">
-    <button class="btn" id="go">Entrar no voo</button>`;
+    <button class="btn" id="go" aria-label="Entrar no voo">Entrar no voo</button>`;
   const go = () => { const v = $('#nm').value.trim(); if (!v) { $('#nm').focus(); return; } name = v; localStorage.setItem('gol-name', v); join(); };
   $('#go').onclick = go; $('#nm').onkeydown = e => { if (e.key === 'Enter') go(); };
 }
@@ -87,8 +111,8 @@ function renderJoin() {
 function build(ph) {
   if (ph === 'lobby') main.innerHTML = `<h1>Você está no voo!</h1><p>Olhe para o telão. O comandante vai liberar a decolagem.</p><div class="label" id="cnt"></div>`;
   else if (ph === 'countdown') main.innerHTML = `<p>${S.next === 'race' ? 'Corrida de aviões' : 'Decolagem coletiva'}</p><div class="count" id="c">${S.countdown}</div><p>${S.next === 'race' ? 'Prepare o dedo!' : 'Todo mundo junto, sem parar!'}</p>`;
-  else if (ph === 'race') { main.innerHTML = `<div class="label" id="pos"></div><div class="bar orange"><i id="b"></i></div><button class="big" id="t">ACELERAR</button><div class="label">Toque o mais rápido que puder</div>`; bindTap($('#t')); }
-  else if (ph === 'takeoff') { main.innerHTML = `<div class="label">Combustível do avião: ele vaza se vocês pararem!</div><div class="bar"><i id="b"></i></div><button class="big" id="t">ABASTECER</button><div class="label" id="tl"></div>`; bindTap($('#t')); }
+  else if (ph === 'race') { main.innerHTML = `<div class="label" id="pos"></div><div class="bar orange"><i id="b"></i></div><button class="big" id="t" aria-label="Acelerar. Toque rapidamente">ACELERAR</button><div class="label">Toque o mais rápido que puder</div>`; bindTap($('#t')); }
+  else if (ph === 'takeoff') { main.innerHTML = `<div class="label">Combustível do avião: ele vaza se vocês pararem!</div><div class="bar"><i id="b"></i></div><button class="big" id="t" aria-label="Abastecer. Toque rapidamente">ABASTECER</button><div class="label" id="tl"></div>`; bindTap($('#t')); }
   else if (ph === 'race_end') main.innerHTML = `<div id="res"></div>`;
   else if (ph === 'takeoff_end') main.innerHTML = `<div id="res"></div>`;
 }
@@ -115,6 +139,59 @@ function update(ph, p) {
       : `<h1>Não deu dessa vez</h1><p style="margin:12px auto 0">O combustível não chegou a tempo.</p>`;
   }
 }
+
+function phaseSay(ph) {
+  if (!Narr.on) return;
+  const p = mine(), n = S.players.filter(x => x.connected).length;
+  if (ph === 'lobby') Narr.say('Você está no voo' + (me ? ', ' + me.name : '') + '. ' + n + (n === 1 ? ' passageiro a bordo.' : ' passageiros a bordo.') + ' Aguarde o comandante liberar a decolagem.');
+  else if (ph === 'countdown') Narr.say((S.countdown === 3 ? (S.next === 'race' ? 'Corrida de aviões. Prepare o dedo. ' : 'Decolagem coletiva. Todo mundo junto, sem parar. ') : '') + S.countdown, true);
+  else if (ph === 'race') Narr.say('Já! O botão grande laranja ocupa quase toda a tela. Toque nele o mais rápido que puder.', true);
+  else if (ph === 'takeoff') Narr.say('Decolar! Toque no botão grande laranja sem parar. O combustível vaza se vocês pararem.', true);
+  else if (ph === 'race_end') { const pos = p ? S.ranking.indexOf(p.id) + 1 : 0; Narr.say(pos ? 'Fim da corrida. Você terminou em ' + pos + 'º lugar.' : 'Fim da corrida. O tempo acabou antes da sua chegada.', true); }
+  else if (ph === 'takeoff_end') Narr.say(S.takeoff.success ? 'Decolamos! O avião subiu. Você colocou ' + (p ? p.fuelTaps : 0) + ' toques de combustível.' : 'Não deu dessa vez. O combustível não chegou a tempo.', true);
+}
+// ---- Vibração (para todos, independente da audiodescrição) ----
+function phaseBuzz(ph, p) {
+  if (ph === 'countdown') buzz(S.countdown === 3 ? [70, 60, 70] : 70);
+  else if (ph === 'race' || ph === 'takeoff') buzz([150, 70, 150]);
+  else if (ph === 'race_end') buzz(p && S.ranking.includes(p.id) ? [100, 50, 100, 50, 300] : 350);
+  else if (ph === 'takeoff_end') buzz(S.takeoff.success ? [200, 100, 200, 100, 500] : 600);
+}
+function tickBuzz(ph, p) {
+  if (!p) return;
+  const now = Date.now();
+  if (ph === 'race' && !p.finished) {
+    [25, 50, 75].forEach(m => { if (p.progress >= m && !nr.ms['v' + m]) { nr.ms['v' + m] = 1; buzz(m === 50 ? [60, 40, 60] : 50); } });
+  }
+  if (ph === 'race' && p.finished && !nr.ms.vf) { nr.ms.vf = 1; buzz([100, 50, 100, 50, 300]); }
+  if (ph === 'takeoff') {
+    const pct = S.takeoff.fuel / S.takeoff.goal * 100, sec = Math.ceil(S.takeoff.timeLeft / 1000);
+    [25, 50, 75].forEach(m => { if (pct >= m && !nr.ms['v' + m]) { nr.ms['v' + m] = 1; buzz(50); } });
+    if (sec <= 10 && !nr.ms.vt10) { nr.ms.vt10 = 1; buzz(120); }
+    if (sec <= 5 && !nr.ms.vt5) { nr.ms.vt5 = 1; buzz([120, 60, 120]); }
+    if (pct < 15 && sec < 17 && now - (nr.vt || 0) > 4000) { nr.vt = now; buzz([80, 60, 80, 60, 80]); }
+  }
+}
+function tickSay(ph, p) {
+  if (!Narr.on || !p) return;
+  const now = Date.now();
+  if (ph === 'race' && !p.finished) {
+    [[25, 'Um quarto da pista!'], [50, 'Metade do caminho!'], [75, 'Falta pouco!']].forEach(([m, t]) => { if (p.progress >= m && !nr.ms[m]) { nr.ms[m] = 1; Narr.say(t, true); } });
+    const pos = S.players.slice().sort((a, b) => b.progress - a.progress).findIndex(x => x.id === p.id) + 1;
+    if (pos !== nr.pos && now - nr.t > 5000) { nr.pos = pos; nr.t = now; Narr.say('Você está em ' + pos + 'º lugar.'); }
+  }
+  if (ph === 'takeoff') {
+    const pct = S.takeoff.fuel / S.takeoff.goal * 100, sec = Math.ceil(S.takeoff.timeLeft / 1000);
+    [25, 50, 75].forEach(m => { if (pct >= m && !nr.ms[m]) { nr.ms[m] = 1; Narr.say('Combustível em ' + m + ' por cento.', true); } });
+    [10, 5].forEach(w => { if (sec <= w && !nr.ms['t' + w]) { nr.ms['t' + w] = 1; Narr.say('Faltam ' + w + ' segundos!', true); } });
+    if (pct < 15 && sec < 17 && now - nr.t > 6000) { nr.t = now; Narr.say('Atenção, combustível baixo! Toquem mais rápido!'); }
+  }
+}
+const adBtn = $('#ad');
+function adLabel() { adBtn.textContent = Narr.on ? 'Audiodescrição ligada' : 'Usar audiodescrição'; adBtn.setAttribute('aria-pressed', String(Narr.on)); adBtn.classList.toggle('on', Narr.on); }
+if (!Narr.supported) adBtn.style.display = 'none';
+adBtn.onclick = () => { Narr.set(!Narr.on); adLabel(); if (Narr.on) { if (S && me) phaseSay(S.phase); else Narr.say('Digite seu nome e toque em Entrar no voo.'); } };
+adLabel();
 connect(); renderJoin();
 </script>
 </body>
